@@ -16,8 +16,8 @@ agrupamiento y marcadores. La condición que se evalúa (criterio A2 de la rúbr
 | Nombre | Qué hizo |
 |---|---|
 | Rubí Martínez Chavarría | Control de calidad (emptyDrops, filtro de %MT), normalización, PCA, clustering, marcadores, pruebas de sensibilidad y redacción del reporte |
-| Alejandro Pinto Sánchez | |
-| Ernesto Gutierrez Piñon | |
+| Alejandro Pinto Sánchez | [completar] |
+| Ernesto Gutierrez Piñon | [completar] |
 
 ## Cómo reproducir este análisis
 
