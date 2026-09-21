@@ -1,0 +1,630 @@
+---
+title: "Análisis de células individuales — equipo A"
+subtitle: "Proyecto final · Bioinformática y Estadística 3 · LCG 2027-1"
+author: "Rubí Martínez Chavarría, Alejandro Pinto Sánchez y Ernesto Gutierrez Piñon"
+date: today
+lang: es
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: false
+    code-tools: true
+    embed-resources: true
+execute:
+  echo: true
+  warning: false
+  message: false
+engine: knitr
+---
+
+## Antes de empezar
+
+::: {.callout-important}
+## Este reporte tiene que correr desde cero
+
+El criterio A2 de la rúbrica —30 % de la nota del equipo— es que otra persona
+pueda clonar el repositorio y correr `quarto render` sin intervención manual.
+Compruébalo **antes de entregar**, y compruébalo en una sesión limpia de R: un
+objeto que quedó en tu memoria de trabajo no existe para quien evalúa.
+:::
+
+### Rutas
+
+Todas las rutas de datos se declaran aquí y en ningún otro lugar del reporte. Si
+tu copia de los datos está en otro sitio, cambia solo este bloque.
+
+```{r}
+#| label: rutas
+RUTA_DATOS <- "/mnt/data/bioinfo3/compartido/10x/datasets/proyecto-2026/proyecto-equipo-A.rds"
+```
+
+### Semilla
+
+```{r}
+#| label: semilla
+# Sin esto, cada render da un resultado distinto y el reporte deja de ser
+# reproducible. Varios métodos del módulo son de permutaciones o de
+# inicialización aleatoria: emptyDrops, scrublet, scDblFinder, UMAP.
+set.seed(20260903)
+```
+
+### Paquetes
+
+```{r}
+#| label: paquetes
+suppressPackageStartupMessages({
+  library(SingleCellExperiment)
+  library(scuttle)
+  library(scater)
+  library(scran)
+  library(DropletUtils)
+})
+```
+
+## 1. De dónde vienen estos datos
+
+::: {.callout-note}
+## Las cuatro preguntas obligatorias
+
+Antes de tocar nada, contesta las cuatro de la sesión 04. Son las mismas para
+cualquier conjunto de datos que te llegue en la vida profesional.
+:::
+
+**¿Cuántos genes y cuántas células?**
+38,606 genes × 927,681 columnas (códigos de barras).
+
+**¿Son cuentas crudas o ya están normalizadas?**
+Son cuentas crudas. El assay `counts` contiene enteros no negativos (mínimo 0,
+máximo 13264, sin decimales, sin negativos), consistente con cuentas de
+moléculas.
+
+**¿Qué información de lote o de condición trae?**
+Ninguna. `colData(sce)` tiene 0 columnas: el objeto no trae metadatos de
+lote, donante ni condición. Es una sola muestra: las células no son réplicas
+biológicas, y por eso no se corrige efecto de lote ni se comparan condiciones.
+
+**¿Es la matriz `raw` o la `filtered`?**
+Es la `raw`. Tiene 927,681 columnas, muy por encima de las ~4,094 células de
+referencia para el equipo A (según `resumen-objetos-proyecto.tsv`). Incluye
+todos los códigos de barras posibles; la gran mayoría son gotas vacías. El
+llamado de células (con `emptyDrops`) es parte del control de calidad, y por
+eso hace falta la matriz `raw`: `emptyDrops` estima el perfil del ambiente con
+las gotas vacías.
+
+**¿Qué versión de la anotación de genes se usó?**
+Los archivos del proyecto no la documentan. Los genes se identifican con
+identificadores Ensembl (por ejemplo, `LEF1` es ENSG00000138795) y los símbolos
+están en `rowData(sce)$Symbol`. El objeto tiene 38,606 genes, el mismo número
+que se verificó en clase para la referencia GRCh38-2024-A que usa el curso, pero
+eso es una coincidencia de número y no una confirmación. Los genes mitocondriales
+se identifican por el prefijo `MT-`, así que los datos son humanos.
+
+```{r}
+#| label: importar
+sce <- readRDS(RUTA_DATOS)
+sce
+counts(sce)[1:5, 1:5]
+```
+
+```{r}
+#| label: cuatro-preguntas
+# Comprobaciones detrás de las respuestas de arriba. m@x son los valores
+# distintos de cero: revisar solo esos evita recorrer 3.5e10 entradas.
+m <- counts(sce)
+stopifnot(methods::is(m, "dgCMatrix"))
+dim(sce)
+c(minimo = min(m), maximo = max(m),
+  hay_decimales = any(m@x %% 1 != 0), hay_negativos = any(m@x < 0))
+ncol(colData(sce))
+```
+
+## 2. Control de calidad
+
+**Umbral usado y por qué:** se combinaron dos criterios. Primero, llamado de
+células con `emptyDrops` (FDR ≤ 0.001) sobre la matriz `raw`, en vez de un
+umbral fijo por total de cuentas. Se probaron tres candidatos: el codo de la
+curva de rango (3137 células), el punto de inflexión (4101 células) y
+`emptyDrops` (3998 células) — este último es el que se usó, por ser un
+criterio estadístico basado en el perfil de expresión completo, no solo el
+total de cuentas, y por no presentar p-valores topados (`Limited = 0`).
+
+### 2.1 Llamado de células
+
+La curva de rango ordena todos los códigos de barras por su total de cuentas.
+El codo y la inflexión son dos umbrales candidatos, y ambos salen solo del total
+de cuentas.
+
+```{r}
+#| label: qc-rango
+#| fig-cap: "Curva de rango del equipo A. Línea azul: codo. Línea verde: inflexión."
+#| fig-width: 8
+#| fig-height: 6
+n_barcodes_crudos <- ncol(sce)
+
+br <- barcodeRanks(counts(sce))
+codo      <- metadata(br)$knee
+inflexion <- metadata(br)$inflection
+
+orden_br <- order(br$rank)
+plot(br$rank[orden_br], br$total[orden_br], log = "xy", type = "l", lwd = 2,
+     xlab = "Rango del codigo de barras", ylab = "Total de cuentas",
+     main = "Curva de rango - Equipo A")
+abline(h = codo,      col = "dodgerblue",  lty = 2, lwd = 2)
+abline(h = inflexion, col = "forestgreen", lty = 2, lwd = 2)
+legend("bottomleft", bty = "n", lty = 2, lwd = 2,
+       col = c("dodgerblue", "forestgreen"),
+       legend = c(paste("codo:", round(codo, 1)),
+                  paste("inflexion:", round(inflexion, 1))))
+```
+
+`emptyDrops` compara el perfil de cada código de barras contra el del ambiente.
+Es un método de permutaciones, por eso se fija la semilla justo antes.
+
+```{r}
+#| label: qc-llamado
+set.seed(20260903)
+ed <- emptyDrops(counts(sce))
+llamadas <- !is.na(ed$FDR) & ed$FDR <= 0.001
+
+data.frame(
+  criterio = c("codo", "inflexion", "emptyDrops (FDR <= 0.001)"),
+  celulas  = c(sum(br$total >= codo), sum(br$total >= inflexion), sum(llamadas))
+)
+
+# p-valores topados por el número de permutaciones. La celda que importa es
+# Significativa = FALSE con Topado = TRUE: debe ser 0. Si no lo es, hay que
+# subir `niters` en emptyDrops, no bajar `lower`.
+table(Significativa = llamadas, Topado = ed$Limited, useNA = "ifany")
+
+sce <- sce[, llamadas]
+```
+
+### 2.2 Porcentaje mitocondrial
+
+Segundo, control de calidad mitocondrial (artefacto asignado al equipo A). Se
+compararon tres umbrales sobre el objeto ya filtrado por `emptyDrops`:
+
+| Criterio | Umbral | Células descartadas |
+|---|---|---|
+| MAD (3 desviaciones) | 11.63 % | 916 |
+| Fijo de tutorial | 20 % | 489 |
+| **Elegido, con evidencia propia** | **35 %** | **82** |
+
+```{r}
+#| label: qc-mt-metricas
+simbolos <- rowData(sce)$Symbol
+mito_idx <- grep("^MT-", simbolos)
+# Si el patrón no encuentra nada, el %MT sale 0 para todas las células y no hay
+# ningún error: por eso se comprueba.
+stopifnot(length(mito_idx) > 0)
+length(mito_idx)
+
+sce <- addPerCellQCMetrics(sce, subsets = list(MT = mito_idx))
+```
+
+```{r}
+#| label: qc-mt-histogramas
+#| fig-cap: "Distribución del % mitocondrial. Izquierda: todas las células llamadas por emptyDrops. Derecha: zoom a las de %MT < 30."
+#| fig-width: 9
+#| fig-height: 4
+par(mfrow = c(1, 2))
+hist(sce$subsets_MT_percent, breaks = 50, col = "lightblue",
+     main = "Distribucion de %MT (todas las celulas)", xlab = "% mitocondrial")
+hist(sce$subsets_MT_percent[sce$subsets_MT_percent < 30], breaks = 60,
+     col = "lightblue", main = "Zoom: celulas con %MT < 30", xlab = "% mitocondrial")
+```
+
+```{r}
+#| label: qc-mt-umbrales
+# El umbral adaptativo (MAD) se calcula sobre los datos; el fijo es el de tutorial.
+mad_mt     <- isOutlier(sce$subsets_MT_percent, nmads = 3, type = "higher")
+umbral_mad <- attr(mad_mt, "thresholds")[["higher"]]
+umbrales_mt <- c(MAD = umbral_mad, fijo = 20, elegido = 35)
+
+data.frame(
+  criterio    = names(umbrales_mt),
+  umbral      = round(umbrales_mt, 2),
+  descartadas = sapply(umbrales_mt, function(u) sum(sce$subsets_MT_percent > u)),
+  row.names   = NULL
+)
+```
+
+El criterio MAD y el umbral fijo de 20 % se descartaron porque cortan dentro
+de una población (10–35 % MT) cuyas cuentas totales son iguales o superiores y
+cuyos genes detectados quedan dentro de ≈ 12 % de los de la población de
+referencia (0–10 % MT) — evidencia de actividad metabólica, no de daño celular (ver Sesión 05 del manual: *"hay
+tipos celulares metabólicamente activos ... cuya proporción alta es biología
+legítima"*). Un análisis por tramos finos (cada 5-10 puntos porcentuales)
+mostró que el declive real y sostenido de cuentas y genes detectados empieza
+alrededor de 35 % MT, no antes. Ese es el umbral que se aplicó. La tabla y la
+figura siguientes son esa evidencia.
+
+```{r}
+#| label: qc-mt-tramos
+#| fig-cap: "Genes detectados y cuentas totales por tramo de % mitocondrial."
+#| fig-width: 10
+#| fig-height: 4.5
+df <- as.data.frame(colData(sce))
+df$tramo <- cut(df$subsets_MT_percent,
+                breaks = c(0, 5, 10, 15, 20, 25, 30, 35, 40, 50, 100),
+                include.lowest = TRUE)
+
+aggregate(cbind(sum, detected) ~ tramo, data = df, FUN = median)
+table(df$tramo)
+
+par(mfrow = c(1, 2))
+boxplot(detected ~ tramo, data = df, las = 2, xlab = "", ylab = "Genes detectados")
+boxplot(sum ~ tramo, data = df, las = 2, log = "y", xlab = "",
+        ylab = "Cuentas totales (log)")
+```
+
+La mediana de cuentas se mantiene entre 8,195 y 10,745 en todos los tramos de 0 a
+35 % de %MT (y es más alta entre 15 y 30 % que en el tramo de 0 a 5 %), y la de
+genes detectados entre 2,695 y 3,068. El descenso empieza al pasar de 35 %: en el
+tramo de 35 a 40 % la mediana es de 6,001 cuentas y 1,933 genes, y sigue cayendo
+en los tramos siguientes (4,476 cuentas y 1,475 genes; 2,491 y 514). Por eso el
+umbral de 35 % separa las células con métricas normales de las que ya muestran
+pérdida de material. Los tramos de 30 a 35 % y de 35 a 40 % tienen pocas células
+(40 y 23), así que ese borde se lee con cautela.
+
+```{r}
+#| label: qc-mt-filtro
+descartar_mt <- sce$subsets_MT_percent > 35
+sce <- sce[, !descartar_mt]
+
+data.frame(
+  etapa    = c("matriz cruda", "tras emptyDrops", "tras filtro de %MT (>35%)"),
+  columnas = c(n_barcodes_crudos, sum(llamadas), ncol(sce)),
+  genes    = nrow(sce)
+)
+cat("Celulas finales tras emptyDrops + filtro de %MT (>35%):", ncol(sce), "\n")
+summary(sce$subsets_MT_percent)
+
+# Chequeo contra las medianas de referencia del curso para el equipo A
+# (9040 cuentas y 2978 genes por célula).
+c(mediana_cuentas = median(sce$sum), mediana_genes = median(sce$detected))
+```
+
+### 2.3 Cuentas mínimas, genes detectados y dobletes
+
+`emptyDrops` ya descartó las gotas vacías. Aquí se miran las otras métricas
+antes de decidir si hace falta un umbral más. Tras `emptyDrops` y el filtro de
+%MT quedan 3,916 células, con una mediana de 9,174 cuentas y 3,008 genes
+detectados por célula, cerca de la referencia del curso para el equipo A (9,040
+y 2,978). Hay, sin embargo, células con muy pocas cuentas (mínimo 105) y pocos
+genes (mínimo 67).
+
+Se calculó el umbral adaptativo de la clase 1: una célula es atípica si queda
+más de 5 MADs por debajo de la mediana, en escala logarítmica (5 MADs es el
+valor permisivo, para no perder poblaciones raras). Da 1,721 cuentas y 1,034
+genes, con 97 y 108 células por debajo (las 97 están incluidas entre las 108, así que son 108
+células en total). **No se descartaron.** Se marcaron
+(`baja_calidad`) para comprobar más adelante, en el agrupamiento, si forman su
+propio grupo o se reparten entre las poblaciones: un umbral se justifica por lo
+que elimina, no solo por el número que da.
+
+```{r}
+#| label: qc-cuentas-genes
+summary(sce$sum)
+summary(sce$detected)
+
+bajas_cuentas <- isOutlier(sce$sum,      nmads = 5, type = "lower", log = TRUE)
+bajos_genes   <- isOutlier(sce$detected, nmads = 5, type = "lower", log = TRUE)
+sce$baja_calidad <- bajas_cuentas | bajos_genes
+
+c(umbral_cuentas = attr(bajas_cuentas, "thresholds")[["lower"]],
+  umbral_genes   = attr(bajos_genes,   "thresholds")[["lower"]])
+c(bajas_cuentas = sum(bajas_cuentas), bajos_genes = sum(bajos_genes),
+  cualquiera_de_las_dos = sum(sce$baja_calidad))
+
+# ¿Son células con %MT alto (dañadas) o células pequeñas con %MT normal?
+table(baja_calidad = sce$baja_calidad, MT_mayor_20 = sce$subsets_MT_percent > 20)
+```
+
+La tabla cruzada muestra que esas 108 células no responden al perfil clásico de
+daño (pocas cuentas con %MT alto): solo 25 (23 %) tienen %MT > 20 %, frente al
+10 % del resto (382 de 3,808), y 83 tienen %MT ≤ 20 %.
+
+**Dobletes.** No se evaluaron. Al cargar `scDblFinder`, R se cierra con un
+*segmentation fault* en el hook `.onLoad` de una de sus dependencias (se
+rastreó hasta la cadena `rtracklayer`/`Seqinfo`). El chunk se deja apagado para
+que el reporte corra; ver «Lo que no funcionó».
+
+```{r}
+#| label: qc-dobletes
+#| eval: false
+suppressPackageStartupMessages(library(scDblFinder))
+set.seed(20260903)
+sce <- scDblFinder(sce, verbose = FALSE)
+table(sce$scDblFinder.class)
+```
+
+## 3. Normalización y selección de genes
+
+Se normalizó con `logNormCounts` (divide entre el tamaño de librería de cada
+célula y aplica logaritmo: la misma idea que `LogNormalize` de la clase 1) y se
+seleccionaron los 2,000 genes más variables con `modelGeneVar` y `getTopHVGs`,
+que ajustan la relación media–varianza y buscan los genes que se apartan de la
+curva esperada. Los genes variables construyen el espacio para el PCA; no sirven
+para anotar. El assay `counts` no se modifica: lo normalizado va en `logcounts`.
+
+```{r}
+#| label: parametros
+N_HVG      <- 2000   # convención, no un resultado
+N_PCS      <- 15     # decisión de la sección 4.1
+K_VECINOS  <- 20     # vecinos del grafo de agrupamiento
+```
+
+```{r}
+#| label: normalizacion
+sce <- logNormCounts(sce)
+
+dec <- modelGeneVar(sce)
+hvg <- getTopHVGs(dec, n = N_HVG)
+cat("HVGs seleccionados:", length(hvg), "\n")
+```
+
+## 4. Reducción de dimensionalidad y agrupamiento
+
+### 4.1 PCA y cuántas componentes usar
+
+Se corrió PCA con 30 componentes sobre los genes variables. Para decidir cuántas
+conservar se miran el codo de la curva de varianza, la varianza acumulada y un
+diagnóstico técnico: ¿alguna componente codifica profundidad de secuenciación o
+%MT en lugar de biología?
+
+```{r}
+#| label: pca
+set.seed(20260903)
+sce <- runPCA(sce, subset_row = hvg, ncomponents = 30)
+
+pct_var <- attr(reducedDim(sce, "PCA"), "percentVar")
+round(pct_var, 2)
+c(PC10 = sum(pct_var[1:10]), PC20 = sum(pct_var[1:20]), PC30 = sum(pct_var[1:30]))
+```
+Hay un codo claro entre PC5 y PC6 (la varianza cae de 2.40 % a 0.96 %, menos de
+la mitad), seguido de un descenso gradual y plano. La varianza acumulada (40.1 %
+con 10 PCs, 42.5 % con 20 y 43.9 % con 30) es la esperable en scRNA-seq: buena
+parte de la varianza restante es ruido de muestreo, no biología perdida.
+
+```{r}
+#| label: pca-diagnostico
+pca10 <- reducedDim(sce, "PCA")[, 1:10]
+data.frame(
+  PC          = paste0("PC", 1:10),
+  r_percentMT = round(apply(pca10, 2, cor, sce$subsets_MT_percent), 3),
+  r_nCount    = round(apply(pca10, 2, cor, sce$sum), 3)
+)
+```
+
+Ninguna de las primeras 10 componentes correlaciona fuerte (|r| > 0.5) con el
+%MT ni con las cuentas totales: el máximo es 0.27 con el %MT (PC5) y 0.39 con las
+cuentas (PC7). Las correlaciones con las cuentas son moderadas (0.3–0.4) en PC3,
+PC5 y PC7, por debajo de la alarma de 0.5 pero conviene saberlo. Esto respalda la decisión de conservar las células de 10–35 % de MT: si esa población
+estuviera dominada por una señal técnica, se esperaría verla estructurando
+alguna de las primeras componentes, y no es el caso.
+
+Se usaron **15 PCs**: un poco más allá del codo estricto (PC5–6), siguiendo la
+regla de clase de errar por exceso antes que por defecto (las PCs de más aportan
+ruido; las de menos borran poblaciones enteras). Las mismas 15 PCs se usan para
+el UMAP y para el agrupamiento.
+
+### 4.2 UMAP y agrupamiento
+
+Un UMAP es un mapa, no una medición: las distancias entre islas, su tamaño y su
+forma no son cuantitativos. Se usa para comunicar, no para derivar. El
+agrupamiento no se hace sobre el UMAP sino sobre el espacio de PCA: grafo de
+vecinos más cercanos y detección de comunidades con Louvain.
+
+```{r}
+#| label: umap-agrupamiento
+set.seed(20260903)
+sce <- runUMAP(sce, dimred = "PCA", n_dimred = N_PCS)
+
+suppressPackageStartupMessages(library(bluster))
+set.seed(20260903)
+pcs <- reducedDim(sce, "PCA")[, seq_len(N_PCS)]
+sce$cluster <- factor(clusterRows(pcs, NNGraphParam(k = K_VECINOS, cluster.fun = "louvain")))
+
+table(sce$cluster)
+```
+
+Se obtuvieron 10 clústeres, de 77 a 741 células.
+
+### 4.3 Control de calidad después de agrupar
+
+Un clúster con métricas técnicas anómalas casi siempre es un artefacto que
+sobrevivió al filtrado. La última columna cuenta cuántas de las células marcadas
+como `baja_calidad` en la sección 2.3 cayeron en cada clúster.
+
+```{r}
+#| label: qc-post-cluster
+data.frame(
+  cluster         = levels(sce$cluster),
+  n_celulas       = as.integer(table(sce$cluster)),
+  mediana_MT      = round(tapply(sce$subsets_MT_percent, sce$cluster, median), 2),
+  mediana_cuentas = round(tapply(sce$sum, sce$cluster, median), 0),
+  mediana_genes   = round(tapply(sce$detected, sce$cluster, median), 0),
+  baja_calidad    = as.integer(tapply(sce$baja_calidad, sce$cluster, sum)),
+  row.names       = NULL
+)
+```
+
+```{r}
+#| label: umap-diagnostico
+#| fig-cap: "UMAP coloreado por clúster, % mitocondrial, cuentas totales y LEF1."
+#| fig-width: 12
+#| fig-height: 8
+suppressPackageStartupMessages(library(ggplot2))
+id_lef1 <- rownames(sce)[rowData(sce)$Symbol == "LEF1"]
+stopifnot(length(id_lef1) == 1)
+
+p1 <- plotReducedDim(sce, "UMAP", colour_by = "cluster", text_by = "cluster") + ggtitle("Clusters")
+p2 <- plotReducedDim(sce, "UMAP", colour_by = "subsets_MT_percent") + ggtitle("% Mitocondrial")
+p3 <- plotReducedDim(sce, "UMAP", colour_by = "sum") + ggtitle("Cuentas totales")
+p4 <- plotReducedDim(sce, "UMAP", colour_by = id_lef1) + ggtitle("LEF1 (marcador de linfocitos T)")
+
+if (requireNamespace("patchwork", quietly = TRUE)) {
+  (p1 | p2) / (p3 | p4)
+} else {
+  p1; p2; p3; p4
+}
+```
+
+```{r}
+#| label: boxplots-lef1-mt
+#| fig-cap: "LEF1 y % mitocondrial por clúster."
+#| fig-width: 10
+#| fig-height: 4
+lef1 <- as.numeric(logcounts(sce)[id_lef1, ])
+par(mfrow = c(1, 2))
+boxplot(lef1 ~ sce$cluster, xlab = "Cluster", ylab = "LEF1 (log-normalizado)",
+        main = "LEF1 por cluster")
+boxplot(sce$subsets_MT_percent ~ sce$cluster, xlab = "Cluster",
+        ylab = "% mitocondrial", main = "%MT por cluster")
+
+# Los mismos datos del primer boxplot, en números (cuartiles de LEF1 por clúster)
+round(t(sapply(split(lef1, sce$cluster), quantile, probs = c(0.25, 0.5, 0.75))), 2)
+```
+
+El clúster 9 se aparta del resto en las tres métricas técnicas: tiene el %MT más
+alto (mediana de 10.6 %, frente a 3.1–5.7 % en los demás), la menor profundidad
+(mediana de 2,628 cuentas, frente a 7,253–24,050) y el menor número de genes
+detectados (1,360, frente a 2,756–5,555). Además concentra 99 de las 108 células
+marcadas como `baja_calidad` en la sección 2.3 (92 %; las otras están 8 en el
+clúster 4 y 1 en el 5). Un clúster con cuentas sistemáticamente bajas y %MT alto
+es, según la clase 5, el perfil típico de un artefacto que sobrevivió al
+filtrado, y es fácil confundirlo con un tipo celular.
+
+Los cuartiles de `LEF1` (tabla de arriba) muestran que el clúster 9 no es
+uniforme: la mediana es 2.29, con el cuarto inferior de las células en 0 y el
+cuarto superior por encima de 4.11. En los clústeres 1, 2 y 6, claramente de
+linaje T, la mediana de `LEF1` es de 3.5 a 3.9. Los marcadores principales del
+clúster 9 (sección 4.4) son `CD96`, `CAMK4` y `CSGALNACT1`, genes que también
+aparecen entre los de los clústeres de linaje T 1 y 6, y no tiene un conjunto de
+marcadores propio. Esto es compatible con linfocitos T de menor profundidad y
+mayor %MT, en los que los genes bajos, entre ellos `LEF1`, se pierden por
+detección incompleta (los ceros del primer cuartil), más que con un tipo celular
+distinto. Por eso el clúster se conserva y se deja marcado, en lugar de
+interpretarlo como una población nueva. **No se probó** si desaparece al
+descartar las 108 células de baja calidad, que sería la prueba directa.
+
+### 4.4 Marcadores por clúster
+
+Los clústeres se definieron con los mismos datos que ahora se comparan (*double
+dipping*), así que **los p-valores de esta prueba no son p-valores**: sirven para
+ordenar genes candidatos, no como evidencia inferencial.
+
+```{r}
+#| label: marcadores
+marcadores <- findMarkers(sce, groups = sce$cluster, direction = "up")
+
+# Los 5 genes principales de cada clúster, con símbolo en vez de identificador Ensembl
+top5_por_cluster <- lapply(names(marcadores), function(cl) {
+  top <- marcadores[[cl]][1:5, ]
+  data.frame(cluster = cl,
+             gene = rowData(sce)$Symbol[match(rownames(top), rownames(sce))])
+})
+do.call(rbind, top5_por_cluster)
+```
+
+## 5. Lo que encontraron
+
+Tras el control de calidad (llamado de células con `emptyDrops` y filtro de
+%MT ≤ 35 %) quedaron 3,916 células, repartidas en 10 clústeres de 77 a 741
+células tras PCA (15 componentes), UMAP y agrupamiento por grafo (Louvain,
+k = 20). Un clúster, el 9, tiene un perfil técnico distinto del resto (%MT más
+alto y menos cuentas y genes) y concentra la mayoría de las células de baja
+calidad (sección 4.3).
+
+Los cinco genes principales de cada clúster (sección 4.4) permiten describir el
+linaje sin que esto sea todavía una anotación formal, que se hace en la clase de
+anotación:
+
+- **Linaje T:** clústeres 1 (`CAMK4`, `BACH2`), 2 (`CD8B`, `LEF1`), 3 (`CD3E`,
+  `IL32`, `CCL5`), 6 (`CD96`, `CAMK4`, `BACH2`) y 8 (`BCL11B`). `LEF1` es alto en
+  1, 2 y 6 (medianas de 3.5 a 3.9).
+- **Mieloide:** clúster 4 (`MNDA`, `FCN1`, `LYZ`, `TYROBP`).
+- **Linfocitos B:** clúster 7 (`MS4A1`, `CD79A`, `BANK1`, `CD74`, `HLA-DRA`).
+- **NK:** clúster 10 (`GNLY`, `NKG7`, `CD247`).
+- **Clúster 5 (77 células):** sus genes principales son ribosomales y `SYK`, y tiene
+  las cuentas y los genes más altos de todos (mediana de 24,050 cuentas y 5,555
+  genes). Sin detección de dobletes no se puede descartar que sean dobletes.
+- **Clúster 9:** perfil técnico (sección 4.3) y sin marcadores propios; comparte
+  genes de linaje T con los clústeres 1 y 6.
+
+El diagnóstico de las componentes principales (ninguna correlaciona fuerte con
+%MT ni con las cuentas totales) respalda que el criterio de 35 % de MT no
+introdujo una estructura técnica dominante en el análisis, aunque el clúster 9
+muestra que la separación entre biología y técnica no es perfecta incluso después
+de filtrar.
+
+### Limitaciones
+
+- **Es una sola muestra.** Sin metadatos de donante ni de lote, las células no son
+  réplicas: una sola muestra con miles de células sigue siendo n = 1. Las
+  conclusiones describen esta muestra, no una población.
+- **No hay efecto de lote que corregir** con estos metadatos (`colData` vacío), ni
+  condiciones que comparar con pseudobulk.
+- **No se detectaron dobletes.** `scDblFinder` no se pudo cargar en el clúster
+  (ver «Lo que no funcionó»). Una isla intermedia entre dos poblaciones podría
+  ser un doblete y no un tipo celular; el clúster 5, con las cuentas más altas,
+  es un candidato.
+- **Los p-valores de los marcadores son un ranking**, no evidencia inferencial.
+- **El umbral de %MT (35 %) es más laxo que la convención** y se apoya en la
+  evidencia por tramos de la sección 2.2 y en el diagnóstico de PCA de la
+  sección 4.1.
+- **El clúster 9 tiene un perfil técnico distinto** (sección 4.3): %MT más alto y
+  menos cuentas y genes que el resto, y concentra 99 de las 108 células de baja
+  calidad. Sus marcadores son de linaje T y no tiene un perfil propio; se conserva
+  marcado y no se interpreta como una población distinta.
+
+## Tabla de decisiones
+
+**Criterio A3 de la rúbrica, 15 %.** Llénala sobre la marcha, no al final: la
+columna que más pesa es la tercera, y reconstruirla de memoria produce
+justificaciones vacías.
+
+| Decisión | Valor elegido | Por qué | Qué se probó antes |
+|---|---|---|---|
+| Llamado de células | `emptyDrops`, FDR ≤ 0.001 | Recupera 3998 células, cercano a la referencia (4094); sin p-valores topados | Umbral por codo (3137) y por inflexión (4101) |
+| Fracción mitocondrial máxima | 35 % | El declive sostenido de cuentas y genes detectados empieza en ~35 %; 10-35 % preserva biología legítima | MAD (11.63 %, descartaba 916 células sanas); umbral fijo de tutorial (20 %) |
+| Umbral de cuentas mínimas | Ninguno adicional; referencia adaptativa: 1,721 cuentas (mediana − 5 MAD, escala log) | `emptyDrops` ya exige un perfil distinto del ambiente. Las 97 células bajo ese umbral (mínimo: 105 cuentas) se marcaron y se rastrearon en el agrupamiento en vez de descartarlas a ciegas | Umbral adaptativo de 5 MADs (clase 1) |
+| Umbral de genes detectados | Ninguno adicional; referencia adaptativa: 1,034 genes (mediana − 5 MAD, escala log) | Mismo criterio; 108 células bajo el umbral (mínimo: 67 genes); 99 caen en el clúster 9 | Umbral adaptativo de 5 MADs (clase 1) |
+| Células de baja calidad (clúster 9) | Conservadas y marcadas (`baja_calidad`) | Los marcadores del clúster 9 (`CD96`, `CAMK4`, `CSGALNACT1`) son de linaje T y los comparten los clústeres 1 y 6; se define por baja profundidad y %MT alto y no por un perfil propio. Descartarlo eliminaría 284 células compatibles con linfocitos T | Marcadores, `LEF1` y cruce con `baja_calidad` (secciones 4.3 y 4.4). No se probó volver a agrupar sin las 108 células |
+| Dobletes | No evaluados | `scDblFinder` no carga en el clúster: al importar el paquete R se cierra por un *segfault*. El artefacto del equipo es el mitocondrial y el resto del QC no depende de este paso | Se intentó cargar `scDblFinder`; falla en una dependencia (`rtracklayer`/`Seqinfo`) |
+| Normalización | `logNormCounts` (tamaño de librería y logaritmo) | Estándar de Bioconductor y consistente con `LogNormalize` de la clase 1; supone que el ARN total es ruido técnico | — |
+| Genes variables | 2,000, con `modelGeneVar` y `getTopHVGs` | Convención, no un resultado; ajusta la relación media–varianza. Construyen el espacio, no anotan | — |
+| Covariables eliminadas por regresión | Ninguna | El %MT está correlacionado con la biología; además, ninguna de las 10 primeras PCs correlaciona fuerte con %MT ni con cuentas (correlación máxima, en valor absoluto: 0.27 con %MT y 0.39 con cuentas) | Correlación de las PCs con %MT y cuentas (sección 4.1) |
+| Número de componentes principales | 15 | Codo entre PC5 y PC6; errar por exceso es más seguro que por defecto; ninguna PC correlaciona fuerte con %MT ni cuentas | Varianza acumulada con 10, 20 y 30 PCs: 40.1 %, 42.5 %, 43.9 % |
+| Hiperparámetros de UMAP | Valores por defecto de `runUMAP`, 15 PCs, semilla 20260903 | Un UMAP se usa para comunicar, no para derivar conclusiones | — |
+| Agrupamiento | Louvain sobre el grafo de vecinos, k = 20, 15 PCs | Da 10 clústeres de 77 a 741 células | — |
+
+## Lo que no funcionó
+
+- **`scDblFinder` cierra R en el clúster.** Al cargar el paquete, R se cierra con
+  un *segmentation fault* en el hook `.onLoad` de una de sus dependencias, que se
+  rastreó hasta la cadena `rtracklayer`/`Seqinfo`. `error: true` no lo puede
+  capturar porque R se cierra, así que el chunk quedó apagado y los dobletes sin
+  evaluar. Se reporta como limitación del entorno y no se omite en silencio.
+- **El clúster 9 no se pudo resolver del todo.** Tiene %MT alto y pocas cuentas y
+  genes, y concentra 99 de las 108 células de baja calidad (sección 4.3). Sus
+  marcadores son de linaje T y no tiene un perfil propio, pero no se hizo la
+  prueba directa (volver a agrupar sin las 108 células y ver si el clúster
+  desaparece), así que la interpretación queda como una hipótesis.
+
+## Registro de sesión
+
+```{r}
+#| label: sesion
+sessionInfo()
+```
+
+::: {.callout-tip}
+## Por qué este bloque no se borra
+
+`sessionInfo()` es lo que permite que dentro de un año alguien sepa con qué
+versiones corrió esto. Es la diferencia entre un análisis reproducible y uno que
+funcionaba en la máquina de quien lo escribió.
+:::
