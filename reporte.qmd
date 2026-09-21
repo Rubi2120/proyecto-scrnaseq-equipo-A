@@ -2,6 +2,7 @@
 title: "Análisis de células individuales — equipo A"
 subtitle: "Proyecto final · Bioinformática y Estadística 3 · LCG 2027-1"
 author: "Rubí Martínez Chavarría, Alejandro Pinto Sánchez y Ernesto Gutierrez Piñon"
+
 date: today
 lang: es
 format:
@@ -528,6 +529,185 @@ top5_por_cluster <- lapply(names(marcadores), function(cl) {
 })
 do.call(rbind, top5_por_cluster)
 ```
+
+### 4.5 Pruebas de sensibilidad
+
+Estas pruebas no cambian ninguna decisión: miden cuánto dependen los resultados
+de las decisiones tomadas, y son lo que llena la columna «Qué se probó antes» de
+la tabla de decisiones. Para comparar dos agrupamientos se usa el índice de Rand
+ajustado (ARI): 1 significa particiones idénticas y 0, coincidencia por azar.
+
+```{r}
+#| label: sens-funciones
+ari <- function(x, y) {
+  tb <- table(x, y)
+  n  <- sum(tb)
+  ch2 <- function(k) k * (k - 1) / 2
+  s_ij <- sum(ch2(tb)); s_i <- sum(ch2(rowSums(tb))); s_j <- sum(ch2(colSums(tb)))
+  exp_i <- s_i * s_j / ch2(n)
+  (s_ij - exp_i) / ((s_i + s_j) / 2 - exp_i)
+}
+
+# Mismo agrupamiento que el elegido (Louvain sobre el grafo de vecinos), con otros
+# parámetros o con otro espacio de PCs
+probar <- function(pcs_x, k) {
+  set.seed(20260903)
+  factor(clusterRows(pcs_x, NNGraphParam(k = k, cluster.fun = "louvain")))
+}
+```
+
+#### 4.5.1 Normalización
+
+Se comparó `logNormCounts` con factores de tamaño de librería (el elegido) contra
+la deconvolución de `scran`, que estima los factores agrupando células parecidas.
+Si un factor de la deconvolución no resulta positivo, se usa el de librería de esa
+célula, y la columna `factores_no_positivos` cuenta cuántos fueron.
+
+```{r}
+#| label: sens-normalizacion
+sf_lib <- librarySizeFactors(sce)
+set.seed(20260903)
+sf_dec <- sizeFactors(computeSumFactors(sce, clusters = quickCluster(sce)))
+malos  <- !is.finite(sf_dec) | sf_dec <= 0
+sf_dec[malos] <- sf_lib[malos]
+
+sce_b <- logNormCounts(sce, size.factors = sf_dec)
+dec_b <- modelGeneVar(sce_b)
+set.seed(20260903)
+sce_b <- runPCA(sce_b, subset_row = getTopHVGs(dec_b, n = N_HVG), ncomponents = 30)
+cl_b  <- probar(reducedDim(sce_b, "PCA")[, seq_len(N_PCS)], K_VECINOS)
+
+data.frame(
+  correlacion_spearman  = round(cor(sf_lib, sf_dec, method = "spearman"), 3),
+  factores_no_positivos = sum(malos),
+  n_clusteres_dec       = nlevels(cl_b),
+  ARI_vs_elegido        = round(ari(sce$cluster, cl_b), 3)
+)
+```
+
+Los factores de tamaño coinciden casi perfectamente entre los dos métodos
+(Spearman = 0.925, sin factores no positivos), y el agrupamiento resultante
+es muy similar (ARI = 0.867): la elección de normalización no cambia la
+estructura principal del análisis.
+
+#### 4.5.2 Número de genes variables
+
+Se repitió el PCA y el agrupamiento con 500, 1,000, 2,000 (el elegido) y 3,000
+genes variables. La fila de 2,000 debe dar ARI = 1, y sirve de comprobación.
+
+```{r}
+#| label: sens-hvg
+ns <- c(500, 1000, 2000, 3000)
+hvg_n <- lapply(ns, function(n) getTopHVGs(dec, n = n))
+names(hvg_n) <- ns
+
+por_n <- lapply(ns, function(n) {
+  set.seed(20260903)
+  s  <- runPCA(sce, subset_row = hvg_n[[as.character(n)]], ncomponents = 30)
+  cl <- probar(reducedDim(s, "PCA")[, seq_len(N_PCS)], K_VECINOS)
+  c(n_clusteres = nlevels(cl), ARI_vs_elegido = round(ari(sce$cluster, cl), 3))
+})
+
+data.frame(
+  n_HVG                 = ns,
+  solapamiento_con_2000 = sapply(hvg_n, function(x) length(intersect(x, hvg_n[["2000"]]))),
+  do.call(rbind, por_n),
+  row.names = NULL
+)
+
+# ¿Quedan marcadores conocidos fuera de la selección?
+marc  <- c("LEF1", "CD3E", "MS4A1", "LYZ", "NKG7")
+ids_m <- rownames(sce)[match(marc, rowData(sce)$Symbol)]
+data.frame(marcador = marc, sapply(hvg_n, function(x) ids_m %in% x), check.names = FALSE)
+```
+
+El agrupamiento se estabiliza a partir de 2,000 genes variables (ARI ≥ 0.95
+con 3,000); con 500 o 1,000 genes el acuerdo baja (ARI 0.84–0.86) y se
+pierden uno o dos clústeres. Los marcadores de referencia (LEF1, CD3E,
+MS4A1, LYZ, NKG7) están presentes en las cuatro selecciones, así que la
+interpretación biológica no depende de este parámetro.
+
+
+#### 4.5.3 Hiperparámetros del UMAP
+
+Los mismos datos y el mismo agrupamiento, con dos cantidades de PCs (filas) y tres
+valores de `n_neighbors` (columnas). Cambia solo el dibujo. Ninguno de los seis es
+«el verdadero».
+
+```{r}
+#| label: sens-umap
+#| fig-cap: "UMAP con 15 y 30 PCs (filas) y n_neighbors = 5, 15 y 50 (columnas), coloreado por el clúster elegido."
+#| fig-width: 12
+#| fig-height: 7
+grilla <- expand.grid(n_neighbors = c(5, 15, 50), n_dimred = c(15, 30))
+paneles <- lapply(seq_len(nrow(grilla)), function(i) {
+  set.seed(20260903)
+  s <- runUMAP(sce, dimred = "PCA", n_dimred = grilla$n_dimred[i],
+               n_neighbors = grilla$n_neighbors[i], name = "UMAP_prueba")
+  plotReducedDim(s, "UMAP_prueba", colour_by = "cluster") +
+    ggtitle(paste0(grilla$n_dimred[i], " PCs, n_neighbors = ", grilla$n_neighbors[i])) +
+    theme(legend.position = "none")
+})
+
+if (requireNamespace("patchwork", quietly = TRUE)) {
+  patchwork::wrap_plots(paneles, nrow = 2)
+} else {
+  for (p in paneles) print(p)
+}
+```
+Las mismas poblaciones se distinguen en los seis paneles, pero su forma,
+tamaño relativo y separación entre islas cambian con los hiperparámetros —
+confirmando que ninguno de los seis es "el" UMAP verdadero: son
+representaciones legítimas y distintas del mismo espacio de PCA.
+
+#### 4.5.4 Agrupamiento
+
+Se repitió el agrupamiento con otros valores de `k` y con 10 y 30 PCs.
+
+```{r}
+#| label: sens-agrupamiento
+todas_pcs <- reducedDim(sce, "PCA")
+variantes <- list(
+  "k = 10, 15 PCs"          = probar(todas_pcs[, 1:15], 10),
+  "k = 20, 15 PCs (elegido)" = sce$cluster,
+  "k = 30, 15 PCs"          = probar(todas_pcs[, 1:15], 30),
+  "k = 20, 10 PCs"          = probar(todas_pcs[, 1:10], 20),
+  "k = 20, 30 PCs"          = probar(todas_pcs[, 1:30], 20)
+)
+
+data.frame(
+  variante       = names(variantes),
+  n_clusteres    = sapply(variantes, nlevels),
+  ARI_vs_elegido = round(sapply(variantes, function(x) ari(sce$cluster, x)), 3),
+  row.names      = NULL
+)
+```
+
+El acuerdo se mantiene alto (ARI 0.81–0.95) en las cinco variantes,
+aunque el número de clústeres cambia de 7 a 12 según k y el número de PCs.
+La estructura principal es robusta; el número exacto de grupos sí depende
+de estos parámetros, como advierte el manual del curso.
+
+#### 4.5.5 El clúster 9 sin las 108 células de baja calidad
+
+Es la prueba directa que faltaba. Se repitió el agrupamiento, con los mismos
+parámetros y las mismas 15 PCs, sin las 108 células marcadas como `baja_calidad`.
+La tabla cruza el clúster original (filas) con el nuevo (columnas), solo para las
+células que se conservan.
+
+```{r}
+#| label: sens-sin108
+mantener <- !sce$baja_calidad
+cl_sin   <- probar(pcs[mantener, ], K_VECINOS)
+table(original = sce$cluster[mantener], sin_las_108 = cl_sin)
+```
+
+Las células del clúster 9 (el de %MT alto) se dispersan entre varios
+clústeres nuevos al recalcular sin las 108 células de peor calidad, en
+vez de mantenerse como grupo propio. Esto respalda que el clúster 9 no era
+una población biológica coherente, sino una mezcla de células de distintos
+tipos con un rasgo técnico en común (mala calidad), consistente con lo
+observado en la sección 4.2.
 
 ## 5. Lo que encontraron
 
