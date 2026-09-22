@@ -1,4 +1,5 @@
-# Proyecto final — equipo A
+# Proyecto final 
+## Equipo A
 
 > Análisis de células individuales del conjunto de datos asignado al equipo A
 > (artefacto mitocondrial). Bioinformática y Estadística 3, LCG 2027-1.
