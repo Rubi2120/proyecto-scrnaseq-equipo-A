@@ -28,14 +28,16 @@ cd <el-repositorio>
 sbatch renderizar.sh
 ```
 
-Se ejecuta en el clúster `ken`, desde la carpeta clonada. `renderizar.sh` carga el
-entorno del curso (`setup-curso.sh` y `gcc/14.2.0`) y corre
-`quarto render reporte.qmd`; tarda unos 2 minutos y produce `reporte.html`. No
-debe enviarse más de una vez a la vez: dos renders simultáneos se pisan los
-archivos temporales.
+1. Se ejecuta en el clúster `ken`.
+2. Desde la carpeta clonada. `renderizar.sh`.
+3. Carga el entorno del curso (`setup-curso.sh` y `gcc/14.2.0`)
+4. Se corre `quarto render reporte.qmd`.
+5. Produce `reporte.html`.
+6. No debe enviarse más de una vez a la vez.
 
-**Los datos no están en el repositorio** y no deben estarlo: `.gitignore` los
-excluye. El reporte los lee de la carpeta compartida del curso.
+**Los datos no están en el repositorio** y en `.gitignore` ya que los
+excluye. 
+El reporte los lee de la carpeta compartida del curso.
 
 | Dato | Dónde vive | Cómo se obtuvo |
 |---|---|---|
