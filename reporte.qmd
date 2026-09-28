@@ -24,7 +24,7 @@ engine: knitr
 ::: {.callout-important}
 ## Este reporte tiene que correr desde cero
 
-El criterio A2 de la rúbrica —30 % de la nota del equipo— es que otra persona
+El criterio A2 de la rúbrica, que vale el 30 % de la nota del equipo, es que otra persona
 pueda clonar el repositorio y correr `quarto render` sin intervención manual.
 Compruébalo **antes de entregar**, y compruébalo en una sesión limpia de R: un
 objeto que quedó en tu memoria de trabajo no existe para quien evalúa.
@@ -126,9 +126,9 @@ ncol(colData(sce))
 células con `emptyDrops` (FDR ≤ 0.001) sobre la matriz `raw`, en vez de un
 umbral fijo por total de cuentas. Se probaron tres candidatos: el codo de la
 curva de rango (3137 células), el punto de inflexión (4101 células) y
-`emptyDrops` (3998 células) — este último es el que se usó, por ser un
-criterio estadístico basado en el perfil de expresión completo, no solo el
-total de cuentas, y por no presentar p-valores topados (`Limited = 0`).
+`emptyDrops` (3998 células). Se usó este último criterio porque es
+estadístico y se basa en el perfil de expresión completo, no solo en el
+total de cuentas, y porque no presenta p-valores topados (`Limited = 0`).
 
 ### 2.1 Llamado de células
 
@@ -234,7 +234,8 @@ data.frame(
 El criterio MAD y el umbral fijo de 20 % se descartaron porque cortan dentro
 de una población (10–35 % MT) cuyas cuentas totales son iguales o superiores y
 cuyos genes detectados quedan dentro de ≈ 12 % de los de la población de
-referencia (0–10 % MT) — evidencia de actividad metabólica, no de daño celular (ver Sesión 05 del manual: *"hay
+referencia (0–10 % MT), lo que es evidencia de actividad metabólica y no de
+daño celular (ver Sesión 05 del manual: *"hay
 tipos celulares metabólicamente activos ... cuya proporción alta es biología
 legítima"*). Un análisis por tramos finos (cada 5-10 puntos porcentuales)
 mostró que el declive real y sostenido de cuentas y genes detectados empieza
@@ -327,14 +328,14 @@ La tabla cruzada muestra que esas 108 células no responden al perfil clásico d
 daño (pocas cuentas con %MT alto): solo 25 (23 %) tienen %MT > 20 %, frente al
 10 % del resto (382 de 3,808), y 83 tienen %MT ≤ 20 %.
 
-**Dobletes.** No se evaluaron. Al cargar `scDblFinder`, R se cierra con un
-*segmentation fault* en el hook `.onLoad` de una de sus dependencias (se
-rastreó hasta la cadena `rtracklayer`/`Seqinfo`). El chunk se deja apagado para
-que el reporte corra; ver «Lo que no funcionó».
+**Dobletes.** Se evaluaron con `scDblFinder` (versión 1.26.7, semilla fija).
+Clasificó 186 de las 3,916 células (4.75 %) como dobletes y 3,730 (95.25 %) como
+singletes. No se descartaron: quedan marcadas en `sce$scDblFinder.class` y su
+distribución entre clústeres se revisa en la sección 4.3, igual que las células de
+`baja_calidad`. Este paso depende del entorno descrito en «Lo que no funcionó».
 
 ```{r}
 #| label: qc-dobletes
-#| eval: false
 suppressPackageStartupMessages(library(scDblFinder))
 set.seed(20260903)
 sce <- scDblFinder(sce, verbose = FALSE)
@@ -508,8 +509,26 @@ marcadores propio. Esto es compatible con linfocitos T de menor profundidad y
 mayor %MT, en los que los genes bajos, entre ellos `LEF1`, se pierden por
 detección incompleta (los ceros del primer cuartil), más que con un tipo celular
 distinto. Por eso el clúster se conserva y se deja marcado, en lugar de
-interpretarlo como una población nueva. **No se probó** si desaparece al
-descartar las 108 células de baja calidad, que sería la prueba directa.
+interpretarlo como una población nueva. La prueba directa (reagrupar sin las
+108 células de baja calidad) está en la sección 4.5.5, y el clúster no desaparece.
+
+Proporción de células marcadas como doblete por clúster:
+
+```{r}
+#| label: dobletes-por-cluster
+tb <- table(cluster = sce$cluster, clase = sce$scDblFinder.class)
+cbind(tb, pct_doblete = round(100 * tb[, "doublet"] / rowSums(tb), 1))
+```
+
+Los dobletes no se reparten al azar. El clúster 5 tiene la proporción más alta
+(24 de 77 células, 31.2 %) y es también el de mayores cuentas y genes, lo que es
+compatible con que una parte de sus células sean dobletes; aun así, 53 de sus 77
+células se clasificaron como singletes, así que no se interpreta como un clúster
+de dobletes. Los clústeres 6 (11.8 %), 8 (11.2 %) y 3 (8.8 %) también superan el
+4.75 % global, y el 8 aporta 50 de los 186 dobletes. El clúster 9 casi no tiene
+dobletes (1 de 284, 0.4 %), así que su perfil de baja profundidad y %MT alto no se
+explica por dobletes. La clasificación es una predicción: `scDblFinder` detecta
+mal los dobletes formados por células del mismo tipo.
 
 ### 4.4 Marcadores por clúster
 
@@ -562,6 +581,13 @@ Se comparó `logNormCounts` con factores de tamaño de librería (el elegido) co
 la deconvolución de `scran`, que estima los factores agrupando células parecidas.
 Si un factor de la deconvolución no resulta positivo, se usa el de librería de esa
 célula, y la columna `factores_no_positivos` cuenta cuántos fueron.
+
+Este reporte usa Bioconductor y no Seurat, así que no existe SCTransform como
+tal. La comparación análoga es entre dos formas de normalizar: factores de tamaño
+de librería contra factores por deconvolución. No son equivalentes a
+LogNormalize contra SCTransform (SCTransform ajusta una regresión binomial
+negativa regularizada); aquí solo se verifica que cambiar el método de
+normalización no altera la estructura principal del análisis.
 
 ```{r}
 #| label: sens-normalizacion
@@ -656,8 +682,8 @@ if (requireNamespace("patchwork", quietly = TRUE)) {
 }
 ```
 Las mismas poblaciones se distinguen en los seis paneles, pero su forma,
-tamaño relativo y separación entre islas cambian con los hiperparámetros —
-confirmando que ninguno de los seis es "el" UMAP verdadero: son
+tamaño relativo y separación entre islas cambian con los hiperparámetros.
+Esto confirma que ninguno de los seis es «el» UMAP verdadero: son
 representaciones legítimas y distintas del mismo espacio de PCA.
 
 #### 4.5.4 Agrupamiento
@@ -702,12 +728,15 @@ cl_sin   <- probar(pcs[mantener, ], K_VECINOS)
 table(original = sce$cluster[mantener], sin_las_108 = cl_sin)
 ```
 
-Las células del clúster 9 (el de %MT alto) se dispersan entre varios
-clústeres nuevos al recalcular sin las 108 células de peor calidad, en
-vez de mantenerse como grupo propio. Esto respalda que el clúster 9 no era
-una población biológica coherente, sino una mezcla de células de distintos
-tipos con un rasgo técnico en común (mala calidad), consistente con lo
-observado en la sección 4.2.
+El clúster 9 no se dispersa al quitar las 108 células: 166 de sus 185 células
+restantes (90 %) quedan juntas en un solo clúster nuevo (el 7), que casi no recibe
+células de otros clústeres. Por tanto, el agrupamiento del clúster 9 no se explica
+solo por esas 108 células, y la hipótesis de que era únicamente un artefacto de
+ellas no se sostiene. Tampoco demuestra que sea una población biológica distinta:
+sigue con %MT alto, baja profundidad y marcadores de linaje T compartidos con los
+clústeres 1 y 6 (sección 4.3). Además, el clúster 5 no se mantiene aparte: sus 76
+células restantes se unen al clúster 4, lo que es compatible con su alta
+proporción de dobletes (sección 4.3), pero no lo demuestra.
 
 ## 5. Lo que encontraron
 
@@ -730,7 +759,7 @@ anotación:
 - **NK:** clúster 10 (`GNLY`, `NKG7`, `CD247`).
 - **Clúster 5 (77 células):** sus genes principales son ribosomales y `SYK`, y tiene
   las cuentas y los genes más altos de todos (mediana de 24,050 cuentas y 5,555
-  genes). Sin detección de dobletes no se puede descartar que sean dobletes.
+  genes). `scDblFinder` marcó como doblete 24 de sus 77 células (31.2 %, la proporción más alta; sección 4.3), así que es un candidato a mezcla de perfiles y no se interpreta como una población distinta.
 - **Clúster 9:** perfil técnico (sección 4.3) y sin marcadores propios; comparte
   genes de linaje T con los clústeres 1 y 6.
 
@@ -747,10 +776,12 @@ de filtrar.
   conclusiones describen esta muestra, no una población.
 - **No hay efecto de lote que corregir** con estos metadatos (`colData` vacío), ni
   condiciones que comparar con pseudobulk.
-- **No se detectaron dobletes.** `scDblFinder` no se pudo cargar en el clúster
-  (ver «Lo que no funcionó»). Una isla intermedia entre dos poblaciones podría
-  ser un doblete y no un tipo celular; el clúster 5, con las cuentas más altas,
-  es un candidato.
+- **Los dobletes se marcaron, no se eliminaron.** `scDblFinder` marcó 186 células
+  (4.75 %). Es una predicción, no una certeza, y esas células siguen en todos los
+  análisis; su distribución por clúster está en la sección 4.3. Se concentran en los clústeres 5
+  (31.2 %), 6 (11.8 %) y 8 (11.2 %), por lo que las conclusiones sobre esos grupos
+  deben leerse con cautela. Los dobletes entre células del mismo tipo casi no se
+  detectan, así que 186 es probablemente un mínimo.
 - **Los p-valores de los marcadores son un ranking**, no evidencia inferencial.
 - **El umbral de %MT (35 %) es más laxo que la convención** y se apoya en la
   evidencia por tramos de la sección 2.2 y en el diagnóstico de PCA de la
@@ -758,7 +789,9 @@ de filtrar.
 - **El clúster 9 tiene un perfil técnico distinto** (sección 4.3): %MT más alto y
   menos cuentas y genes que el resto, y concentra 99 de las 108 células de baja
   calidad. Sus marcadores son de linaje T y no tiene un perfil propio; se conserva
-  marcado y no se interpreta como una población distinta.
+  marcado. Al reagrupar sin las 108 células (sección 4.5.5) el grupo persiste, así
+  que no se descarta que sea una subpoblación real de linfocitos T de baja
+  profundidad; no se le asigna una identidad.
 
 ## Tabla de decisiones
 
@@ -766,33 +799,66 @@ de filtrar.
 columna que más pesa es la tercera, y reconstruirla de memoria produce
 justificaciones vacías.
 
-| Decisión | Valor elegido | Por qué | Qué se probó antes |
-|---|---|---|---|
-| Llamado de células | `emptyDrops`, FDR ≤ 0.001 | Recupera 3998 células, cercano a la referencia (4094); sin p-valores topados | Umbral por codo (3137) y por inflexión (4101) |
-| Fracción mitocondrial máxima | 35 % | El declive sostenido de cuentas y genes detectados empieza en ~35 %; 10-35 % preserva biología legítima | MAD (11.63 %, descartaba 916 células sanas); umbral fijo de tutorial (20 %) |
-| Umbral de cuentas mínimas | Ninguno adicional; referencia adaptativa: 1,721 cuentas (mediana − 5 MAD, escala log) | `emptyDrops` ya exige un perfil distinto del ambiente. Las 97 células bajo ese umbral (mínimo: 105 cuentas) se marcaron y se rastrearon en el agrupamiento en vez de descartarlas a ciegas | Umbral adaptativo de 5 MADs (clase 1) |
-| Umbral de genes detectados | Ninguno adicional; referencia adaptativa: 1,034 genes (mediana − 5 MAD, escala log) | Mismo criterio; 108 células bajo el umbral (mínimo: 67 genes); 99 caen en el clúster 9 | Umbral adaptativo de 5 MADs (clase 1) |
-| Células de baja calidad (clúster 9) | Conservadas y marcadas (`baja_calidad`) | Los marcadores del clúster 9 (`CD96`, `CAMK4`, `CSGALNACT1`) son de linaje T y los comparten los clústeres 1 y 6; se define por baja profundidad y %MT alto y no por un perfil propio. Descartarlo eliminaría 284 células compatibles con linfocitos T | Marcadores, `LEF1` y cruce con `baja_calidad` (secciones 4.3 y 4.4). No se probó volver a agrupar sin las 108 células |
-| Dobletes | No evaluados | `scDblFinder` no carga en el clúster: al importar el paquete R se cierra por un *segfault*. El artefacto del equipo es el mitocondrial y el resto del QC no depende de este paso | Se intentó cargar `scDblFinder`; falla en una dependencia (`rtracklayer`/`Seqinfo`) |
-| Normalización | `logNormCounts` (tamaño de librería y logaritmo) | Estándar de Bioconductor y consistente con `LogNormalize` de la clase 1; supone que el ARN total es ruido técnico | — |
-| Genes variables | 2,000, con `modelGeneVar` y `getTopHVGs` | Convención, no un resultado; ajusta la relación media–varianza. Construyen el espacio, no anotan | — |
-| Covariables eliminadas por regresión | Ninguna | El %MT está correlacionado con la biología; además, ninguna de las 10 primeras PCs correlaciona fuerte con %MT ni con cuentas (correlación máxima, en valor absoluto: 0.27 con %MT y 0.39 con cuentas) | Correlación de las PCs con %MT y cuentas (sección 4.1) |
-| Número de componentes principales | 15 | Codo entre PC5 y PC6; errar por exceso es más seguro que por defecto; ninguna PC correlaciona fuerte con %MT ni cuentas | Varianza acumulada con 10, 20 y 30 PCs: 40.1 %, 42.5 %, 43.9 % |
-| Hiperparámetros de UMAP | Valores por defecto de `runUMAP`, 15 PCs, semilla 20260903 | Un UMAP se usa para comunicar, no para derivar conclusiones | — |
-| Agrupamiento | Louvain sobre el grafo de vecinos, k = 20, 15 PCs | Da 10 clústeres de 77 a 741 células | — |
+| Decisión | Valor elegido | Por qué | Qué se probó antes | Dónde se aplica en el código |
+|---|---|---|---|---|
+| Llamado de células | `emptyDrops`, FDR ≤ 0.001 | Recupera 3998 células, cercano a la referencia (4094); sin p-valores topados | Umbral por codo (3137) y por inflexión (4101) | `qc-llamado` |
+| Fracción mitocondrial máxima | 35 % | El declive sostenido de cuentas y genes detectados empieza en ~35 %; 10-35 % preserva biología legítima | MAD (11.63 %, descartaba 916 células sanas); umbral fijo de tutorial (20 %) | `qc-mt-filtro` |
+| Umbral de cuentas mínimas | Ninguno adicional; referencia adaptativa: 1,721 cuentas (mediana − 5 MAD, escala log) | `emptyDrops` ya exige un perfil distinto del ambiente. Las 97 células bajo ese umbral (mínimo: 105 cuentas) se marcaron y se rastrearon en el agrupamiento en vez de descartarlas a ciegas | Umbral adaptativo de 5 MADs (clase 1) | `qc-cuentas-genes` |
+| Umbral de genes detectados | Ninguno adicional; referencia adaptativa: 1,034 genes (mediana − 5 MAD, escala log) | Mismo criterio; 108 células bajo el umbral (mínimo: 67 genes); 99 caen en el clúster 9 | Umbral adaptativo de 5 MADs (clase 1) | `qc-cuentas-genes` |
+| Células de baja calidad (clúster 9) | Conservadas y marcadas (`baja_calidad`) | Los marcadores del clúster 9 (`CD96`, `CAMK4`, `CSGALNACT1`) son de linaje T y los comparten los clústeres 1 y 6; se define por baja profundidad y %MT alto y no por un perfil propio. Descartarlo eliminaría 284 células compatibles con linfocitos T | Marcadores, `LEF1` y cruce con `baja_calidad` (secciones 4.3 y 4.4). Reagrupar sin las 108 células (sección 4.5.5): el clúster persiste | `qc-cuentas-genes`, `qc-post-cluster`, `sens-sin108` |
+| Dobletes | `scDblFinder` 1.26.7; 186 de 3,916 células (4.75 %) marcadas como doblete y conservadas | Eliminarlas cambiaría todas las cifras y los clústeres del reporte; marcarlas permite ver dónde caen, como con `baja_calidad` | El paquete fallaba con un *segfault* al cargarse; se resolvió con el entorno limpio de SLURM (ver «Lo que no funcionó») | `qc-dobletes`, `dobletes-por-cluster` |
+| Normalización | `logNormCounts` (tamaño de librería y logaritmo) | Estándar de Bioconductor y consistente con `LogNormalize` de la clase 1; supone que el ARN total es ruido técnico | — | `normalizacion`, `sens-normalizacion` |
+| Genes variables | 2,000, con `modelGeneVar` y `getTopHVGs` | Convención, no un resultado; ajusta la relación media–varianza. Construyen el espacio, no anotan | — | `parametros`, `normalizacion`, `sens-hvg` |
+| Covariables eliminadas por regresión | Ninguna | El %MT está correlacionado con la biología; además, ninguna de las 10 primeras PCs correlaciona fuerte con %MT ni con cuentas (correlación máxima, en valor absoluto: 0.27 con %MT y 0.39 con cuentas) | Correlación de las PCs con %MT y cuentas (sección 4.1) | `pca-diagnostico` |
+| Número de componentes principales | 15 | Codo entre PC5 y PC6; errar por exceso es más seguro que por defecto; ninguna PC correlaciona fuerte con %MT ni cuentas | Varianza acumulada con 10, 20 y 30 PCs: 40.1 %, 42.5 %, 43.9 % | `parametros`, `pca`, `pca-diagnostico` |
+| Hiperparámetros de UMAP | Valores por defecto de `runUMAP`, 15 PCs, semilla 20260903 | Un UMAP se usa para comunicar, no para derivar conclusiones | — | `umap-agrupamiento`, `sens-umap` |
+| Agrupamiento | Louvain sobre el grafo de vecinos, k = 20, 15 PCs | Da 10 clústeres de 77 a 741 células | — | `umap-agrupamiento`, `sens-agrupamiento` |
 
 ## Lo que no funcionó
 
-- **`scDblFinder` cierra R en el clúster.** Al cargar el paquete, R se cierra con
-  un *segmentation fault* en el hook `.onLoad` de una de sus dependencias, que se
-  rastreó hasta la cadena `rtracklayer`/`Seqinfo`. `error: true` no lo puede
-  capturar porque R se cierra, así que el chunk quedó apagado y los dobletes sin
-  evaluar. Se reporta como limitación del entorno y no se omite en silencio.
-- **El clúster 9 no se pudo resolver del todo.** Tiene %MT alto y pocas cuentas y
-  genes, y concentra 99 de las 108 células de baja calidad (sección 4.3). Sus
-  marcadores son de linaje T y no tiene un perfil propio, pero no se hizo la
-  prueba directa (volver a agrupar sin las 108 células y ver si el clúster
-  desaparece), así que la interpretación queda como una hipótesis.
+- **`scDblFinder` cerraba R en el clúster (resuelto).** Al cargar el paquete, R
+  terminaba con un *segmentation fault*, que `error: true` no puede capturar. Se
+  resolvió renderizando con SLURM tras `module purge`, cargar `gcc/14.2.0` y quitar
+  las rutas de `anaconda3` de `LD_LIBRARY_PATH`. La causa más probable es un
+  conflicto de bibliotecas dinámicas, pero no se demostró: los cambios se aplicaron
+  juntos y no se probó cuál fue el decisivo. Por eso el reporte debe renderizarse con `renderizar.sh`.
+- **El clúster 9 no se pudo resolver del todo.** Tiene %MT alto y pocas
+  cuentas y genes, y concentra 99 de las 108 células de baja calidad (sección 4.3).
+  Sus marcadores son de linaje T. Al volver a agrupar sin las 108 células (sección 4.5.5) el clúster persiste, así
+  que no se puede afirmar que sea solo un artefacto de esas células; su identidad
+  queda sin resolver.
+
+## Referencias
+
+Fuentes de los métodos y las convenciones que sigue este reporte. El material
+del curso no tiene DOI; se cita por sesión y fecha para poder localizarlo.
+
+**Material del curso**
+
+- Balderas-Martínez, Y. I. (2026). *Manual del módulo de single-cell RNA-seq*, Sesiones 01 a 06 y 09. Bioinformática y Estadística 3, LCG, ENES Juriquilla, UNAM, semestre 2027-1.
+- Ceschin, D. (2026). *Clase 1: Normalización, escalamiento y reducción de dimensionalidad* (8 de septiembre de 2026) y *Clase 2: Clustering y expresión diferencial* (10 de septiembre de 2026). Mismo curso.
+
+**Métodos**
+
+- Lun, A. T. L., Riesenfeld, S., Andrews, T., Dao, T. P., Gomes, T., y Marioni, J. C. (2019). Distinguishing cells from empty droplets in droplet-based single-cell RNA sequencing data. *Genome Biology*, 20, 63. — `emptyDrops`, sección 2.1.
+- McCarthy, D. J., Campbell, K. R., Lun, A. T. L., y Wills, Q. F. (2017). Scater: pre-processing, quality control, normalization and visualization of single-cell RNA-seq data in R. *Bioinformatics*, 33(8), 1179–1186. — métricas de calidad y el umbral adaptativo por MAD, secciones 2.2 y 2.3.
+- Lun, A. T. L., Bach, K., y Marioni, J. C. (2016). Pooling across cells to normalize single-cell RNA sequencing data with many zero counts. *Genome Biology*, 17, 75. — deconvolución de `scran`, sección 4.5.1.
+- Amezquita, R. A., Lun, A. T. L., Becht, E., et al. (2020). Orchestrating single-cell analysis with Bioconductor. *Nature Methods*, 17, 137–145. — el flujo de trabajo completo (OSCA), base de todo el reporte.
+- Squair, J. W., Gautier, M., Kathe, C., et al. (2021). Confronting false discoveries in single-cell differential expression. *Nature Communications*, 12, 5692. — por qué los p-valores de `findMarkers` no son válidos, sección 4.4.
+- Germain, P.-L., Sonrel, A., y Robinson, M. D. (2021). scDblFinder: an efficient, doublet-aware clustering approach for the removal of doublets from single-cell RNA sequencing data. *F1000Research*. — el método de dobletes que se intentó usar, sección 2.3 y «Lo que no funcionó».
+- Zheng, G. X. Y., Terry, J. M., Belgrader, P., et al. (2017). Massively parallel digital transcriptional profiling of single cells. *Nature Communications*, 8, 14049. — la arquitectura de código de barras y UMI de 10x.
+- Svensson, V., Natarajan, K. N., Ly, L.-H., et al. (2017). Power analysis of single-cell RNA-sequencing experiments. *Nature Methods*, 14, 381–387. — eficiencia de captura y ceros en la matriz.
+
+Las tres siguientes no aparecen en la bibliografía del curso; son las referencias generales de cada método.
+
+- Blondel, V. D., Guillaume, J.-L., Lambiotte, R., y Lefebvre, E. (2008). Fast unfolding of communities in large networks. *Journal of Statistical Mechanics*, P10008. — algoritmo Louvain, sección 4.2.
+- McInnes, L., Healy, J., y Melville, J. (2018). UMAP: Uniform Manifold Approximation and Projection for Dimension Reduction. *arXiv:1802.03426*. — sección 4.2.
+- Hubert, L., y Arabie, P. (1985). Comparing partitions. *Journal of Classification*, 2, 193–218. — índice de Rand ajustado, sección 4.5.
+
+**Datos**
+
+- 10x Genomics (2024). *refdata-gex-GRCh38-2024-A* [referencia transcriptómica]. Construida a partir de GENCODE (ensamble primario GRCh38, anotación v44, GTF filtrado). Instalada en el clúster el 25 de agosto de 2026; confirmado con el `reference.json` de la propia referencia (`/mnt/data/bioinfo3/compartido/10x/refdata-gex-GRCh38-2024-A/`).
+- 10x Genomics (2020). *PBMCs from a healthy donor — Manual (channel 5)* [conjunto de datos]. Química Chromium 3' v3.1, Cell Ranger 3.1.0, 5,000 células objetivo, 4,053 detectadas. Licencia CC BY 4.0. Es el conjunto que usaron las prácticas de las sesiones 1 a 6 (ahí identificado como `manual_5k_pbmc_NGSC3_ch5`); no se confirmó si `proyecto-equipo-A.rds` deriva exactamente de este archivo o de otro con el mismo número de genes.
 
 ## Registro de sesión
 
