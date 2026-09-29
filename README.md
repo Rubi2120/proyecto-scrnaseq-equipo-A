@@ -15,9 +15,9 @@ agrupamiento y marcadores. La condición que se evalúa (criterio A2 de la rúbr
 
 | Nombre | Qué hizo |
 |---|---|
-| Rubí Martínez Chavarría | |
-| Alejandro Pinto Sánchez | |
-| Ernesto Gutierrez Piñon | |
+| Rubí Martínez Chavarría | Desarrollo, ejecución y optimización completa del pipeline bioinformático en el clúster: control de calidad (QC), llamado de células (emptyDrops), filtrado mitocondrial, normalización, PCA, UMAP, clustering, pruebas de sensibilidad en Quarto y participación en la narración del video |
+| Alejandro Pinto Sánchez | Revisión de código, pruebas de reproducibilidad (clonado limpio y verificación de renderizado), revisión crítica de los resultados analíticos y participación en el guion y exposición del video. |
+| Ernesto Gutierrez Piñon | Auditoría y revisión crítica de los resultados analíticos, verificación del repositorio, estructuración de la presentación de diapositivas y participación en la narración del video.|
 
 ## Cómo reproducir este análisis
 
